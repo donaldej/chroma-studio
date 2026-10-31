@@ -1,0 +1,22 @@
+{
+  "name": "chroma-studio",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && node scripts/build.mjs",
+    "dev": "node scripts/dev.mjs",
+    "test": "node --test tests/packet.test.mjs"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "0.28.2",
+    "playwright": "1.56.1",
+    "typescript": "^5.9.0"
+  }
+}

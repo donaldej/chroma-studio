@@ -1,0 +1,4 @@
+esptool==4.11.0
+platformio==6.1.18
+requests==2.34.2
+pyserial==3.5
