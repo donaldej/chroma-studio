@@ -11,7 +11,9 @@ with a new interface, JSON API, persistent library, and onboard controls.
 ## Features
 
 - Text/image editor with a 640 × 384 preview, font/layout controls, and saved screens.
-- Display registry, pairing, transfer queue, live progress, and cancellation.
+- Display registry, tag diagnostics, visual confirmation, persistent queue, bounded retries, and cancellation.
+- Controller-run schedules and playlists; optional live weather, clock, and JSON data sources.
+- Drag-and-drop text, shape, QR, and image layers, plus full checksummed backup/restore.
 - Black/white/yellow rendering; both pigment planes are sent to clear old content.
 - Controller LCD showing live transfer progress and wheel navigation for sending saved screens.
 - Power menu: confirmed shutdown, reboot, and screen off.
@@ -94,7 +96,8 @@ assets are also included in this repository.
 .venv/Scripts/python.exe -m platformio run -d firmware -e t-embed-cc1101-plus -t uploadfs --upload-port COM12
 ```
 
-Run sequentially. `upload` installs firmware; `uploadfs` installs web assets.
+Run sequentially. `upload` installs firmware and its embedded web interface;
+`uploadfs` initializes filesystem assets for a fresh controller.
 **Uploading the filesystem replaces saved screens and display registrations.**
 For an existing controller, follow the preservation instructions below.
 Application-only uploads preserve the filesystem and saved Wi-Fi settings.
@@ -171,13 +174,30 @@ See [API and usage notes](docs/studio.md) for the full reference.
 The HTTP API has no authentication: use a trusted local network and do not expose
 it directly to the internet. Battery percentage and continuous tag-online status
 are not measured. Limits: 12 displays, 20 saved screens, eight pending
-actions/transfers, and 12 recent jobs. Job history resets at reboot; the library
-and registry persist.
+actions/transfers, and 12 recent jobs. The last 12 jobs, library, and registry persist across reboot.
+
+## Schedules, layouts, and live data
+
+Studio 0.4 adds [radio measurements, image history and Home Assistant/MQTT](docs/radio-history-mqtt.md).
+Studio 0.3 introduced a Diagnostics page, persistent transfer recovery, schedules,
+playlists, a visual layout editor, and full library backup/restore. Brightness
+and screen timeout live in Settings. The optional local companion renders weather,
+clock/date, calendar notices, Home Assistant, and other JSON-fed templates.
+See the [feature setup and API guide](docs/features.md) for configuration and limits.
 
 ## Updating an existing controller
 
-For firmware-only changes, build/upload the application and skip `uploadfs`.
-For a frontend update, first build/deploy React assets, then preserve the library:
+Studio 0.5 adds [image preparation and browser firmware updates](docs/updates-and-images.md).
+After installing 0.5 once over USB, use **Settings → Firmware updates** with a
+`.chroma` package. Application and interface update together while library and
+Wi-Fi data stay in place. The guide includes package creation, previous-app
+switching, and USB recovery that resets the OTA boot selector correctly.
+
+For Studio 0.5+, prefer browser packages. If using USB after OTA, follow the
+recovery helper instructions so app0 is selected correctly; a normal PlatformIO
+upload alone may leave app1 selected. For older controllers, firmware-only
+changes can use application upload without `uploadfs`.
+For controllers older than 0.5, a frontend update needs a filesystem update:
 
 ```powershell
 .venv/Scripts/python.exe tools/backup_studio.py --controller http://<controller-ip> --output backups/before-update
@@ -200,6 +220,8 @@ npm run build
 npm test
 npx playwright install chromium
 node tests/browser.mjs
+node tests/features-browser.mjs
+node tests/companion.mjs
 $env:CHROMA_CONTROLLER = 'http://<controller-ip>'
 npm run dev
 ```
@@ -217,6 +239,14 @@ saved image and verifies changing LCD progress and display acknowledgement:
 .venv/Scripts/python.exe tools/test_controller_progress.py --controller http://<controller-ip> --serial YOUR_DISPLAY_SERIAL --output artifacts/progress-test.json
 ```
 
+The feature check exercises a bounded timeout, optional USB restart recovery,
+one-time scheduling, and a two-screen playlist. It sends real images, then
+restores the selected final preset and removes its temporary plans:
+
+```powershell
+.venv/Scripts/python.exe tools/test_studio_features.py --controller http://<controller-ip> --serial YOUR_DISPLAY_SERIAL --test-preset TEST_PRESET_ID --final-preset FINAL_PRESET_ID --reset-check --port COM12 --output artifacts/features-test.json
+```
+
 `ui/tests/preview.mjs` is a local regression check requiring separately captured
 snapshots in `backups/studio-final/`; these private snapshots are not distributed.
 Firmware/frontend builds, packet/browser tests, black/yellow physical transfers,
@@ -229,8 +259,9 @@ and live LCD progress have passed on the tested board.
   devices on the same LAN and check guest-network/client isolation settings.
 - **No display reply:** check batteries, serial, display ID, regional wake channel,
   and radio channel. A retained image does not prove the tag is powered.
-- **Missing web interface:** first-time setup needs `uploadfs`. Back up existing
-  screens before replacing a used controller's filesystem.
+- **Missing web interface:** rebuild/deploy React assets before building firmware.
+  Studio 0.5 embeds the interface in the application; older versions need `uploadfs`.
+  Back up existing screens before replacing a used controller's filesystem.
 - **Old API calls fail:** Studio uses `/api/v1`; `/set_custom` and `/edit` belong
   to the legacy interface.
 

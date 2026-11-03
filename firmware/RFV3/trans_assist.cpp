@@ -108,8 +108,9 @@ void add_to_receive_buffer(uint8_t *buffer)
 
 void save_receive_buffer()
 {
-    char str[3 * length_to_receive];
-    tohex(data_to_receive, length_to_receive, str, 3 * length_to_receive);
+    char str[3 * length_to_receive + 1];
+    str[0] = 0;
+    if (length_to_receive) tohex(data_to_receive, length_to_receive, str, sizeof(str));
     String data_received = "NetID: ";
     data_received += String(get_network_id());
     data_received += " freq: ";

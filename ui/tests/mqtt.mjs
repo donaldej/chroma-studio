@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import {createServer as tcpServer} from 'node:net';
+import {createServer} from 'node:http';
+import aedes from 'aedes';
+import {connect} from 'mqtt';
+import {createMqttBridge,validateMqtt,publicMqtt} from '../../tools/mqtt-bridge.mjs';
+
+const broker=aedes(),tcp=tcpServer(broker.handle),uploads=[];
+const http=createServer(async(req,res)=>{for await(const chunk of req)uploads.push(chunk);res.setHeader('Content-Type','application/json');res.end('{}');});
+await new Promise(resolve=>tcp.listen(0,'127.0.0.1',resolve));await new Promise(resolve=>http.listen(0,'127.0.0.1',resolve));
+const url='mqtt://127.0.0.1:'+tcp.address().port,controller='http://127.0.0.1:'+http.address().port;
+const observer=connect(url,{clientId:'studio-test-observer'}),messages=[];
+const state={controller:{version:'0.4.0',radio_mode:'Idle',ip:'192.0.2.1'},devices:[{serial:'JM00000000B',name:'Test tag',last_preset:'welcome',radio_stats:{jobs:2,acknowledged:1,retries:1}}],presets:[{id:'welcome',name:'Welcome',kind:'text',text:'{{status}}'}],jobs:[]};
+let available=true,renders=0;
+const request=async(path,body)=>{if(!available)throw new Error('Offline');if(path==='/state')return structuredClone(state);assert(['/jobs','/jobs/frame'].includes(path));const job={id:'job-'+state.jobs.length,serial:body.serial,state:'queued',...body};state.jobs.push(job);return {id:job.id};};
+const config={mqtt:validateMqtt({enabled:true,url,prefix:'test-studio',client_id:'test-controller',username:'test',password:'private-test-password'})};
+const bridge=createMqttBridge({controller,config,save:async()=>{},request,render:async design=>{assert.equal(design.text,'Online');renders++;return new Uint8Array([1,2,3]);}});
+const wait=async predicate=>{const end=Date.now()+8000;while(Date.now()<end){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,25));}throw new Error('MQTT condition timed out');};
+const publish=(topic,body,retain=false)=>new Promise((resolve,reject)=>observer.publish(topic,typeof body==='string'?body:JSON.stringify(body),{qos:1,retain},error=>error?reject(error):resolve()));
+try{
+ await new Promise(resolve=>observer.on('connect',resolve));observer.on('message',(topic,payload)=>messages.push({topic,text:payload.toString()}));
+ await new Promise((resolve,reject)=>observer.subscribe('#',error=>error?reject(error):resolve()));
+ await publish('test-studio/command',{serial:'JM00000000B',preset:'welcome'},true);
+ await bridge.configure();await wait(()=>bridge.status().connected);
+ await wait(()=>messages.some(item=>item.topic==='test-studio/result'&&item.text.includes('Retained')));
+ assert.equal(state.jobs.length,0);await publish('test-studio/command','',true);
+ await wait(()=>messages.some(item=>item.topic==='homeassistant/select/test-controller_JM00000000B_screen/config'));
+ const discovery=JSON.parse(messages.find(item=>item.topic==='homeassistant/select/test-controller_JM00000000B_screen/config').text);
+ assert.deepEqual(discovery.options,['welcome']);assert.equal(discovery.retain,false);
+ const discoveryCount=messages.filter(item=>item.topic==='homeassistant/select/test-controller_JM00000000B_screen/config').length;
+ await publish('homeassistant/status','online');await wait(()=>messages.filter(item=>item.topic==='homeassistant/select/test-controller_JM00000000B_screen/config').length>discoveryCount);
+ await publish('test-studio/command',{request_id:'one',serial:'JM00000000B',preset:'welcome'});await wait(()=>state.jobs.length===1);
+ await publish('test-studio/command',{request_id:'one',serial:'JM00000000B',preset:'welcome'});await wait(()=>messages.some(item=>item.text.includes('"duplicate":true')));assert.equal(state.jobs.length,1);
+ await publish('test-studio/command',{request_id:'busy',serial:'JM00000000B',preset:'welcome'});await wait(()=>messages.some(item=>item.text.includes('pending transfer')));assert.equal(state.jobs.length,1);
+ state.jobs[0].state='completed';
+ await publish('test-studio/command',{request_id:'two',serial:'JM00000000B',preset:'welcome',variables:{status:'Online'}});await wait(()=>state.jobs.length===2);
+ assert.equal(renders,1);assert(uploads.length);assert.equal(state.presets[0].text,'{{status}}');assert.equal(state.jobs[1].title,'Welcome');assert.equal(state.jobs[1].preset,undefined);
+ assert(!JSON.stringify(publicMqtt(config.mqtt)).includes('private-test-password'));assert(!JSON.stringify(bridge.status()).includes('private-test-password'));
+ available=false;await bridge.tick();assert.equal(bridge.status().controller_online,false);await wait(()=>messages.some(item=>item.topic==='test-studio/controller/availability'&&item.text==='offline'));
+ available=true;state.jobs[1].state='completed';await bridge.tick();assert.equal(bridge.status().controller_online,true);
+ config.mqtt.enabled=false;await bridge.configure();assert.equal(bridge.status().connected,false);await wait(()=>messages.some(item=>item.topic==='homeassistant/select/test-controller_JM00000000B_screen/config'&&item.text===''));
+ assert.throws(()=>validateMqtt({url:'mqtt://user:secret@localhost'}));assert.throws(()=>validateMqtt({url,prefix:'bad/#'}));
+ console.log('PASS: real MQTT broker, discovery, retained-command rejection, deduplication, busy guard, template snapshots, private credentials, availability and discovery cleanup');
+}finally{await bridge.stop();await new Promise(resolve=>observer.end(true,{},resolve));await new Promise(resolve=>http.close(resolve));await new Promise(resolve=>tcp.close(resolve));await new Promise(resolve=>broker.close(resolve));}

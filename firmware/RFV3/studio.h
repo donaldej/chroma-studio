@@ -13,6 +13,11 @@ struct StudioMenu {
   char job_state[17];
   int progress;
   int queued;
+  int brightness, screen_timeout;
+  char error[97];
+  int playlist_count;
+  char playlist_ids[12][33], playlists[12][41];
+  bool playlist_enabled[12];
 };
 void init_studio();
 void poll_studio();
@@ -30,4 +35,5 @@ uint32_t local_ui_progress_updates();
 void studio_discard_radio_edges();
 uint32_t studio_discarded_radio_edges();
 bool studio_radio_service();
+bool studio_playlist_toggle(const char *id, String &error);
 #endif

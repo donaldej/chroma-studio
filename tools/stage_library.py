@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+from library_assets import referenced_assets
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('backup', type=Path)
@@ -17,7 +18,15 @@ if not target.is_relative_to(root):
 config = json.loads((args.backup / 'studio.json').read_text(encoding='utf-8'))
 manifest = json.loads((args.backup / 'manifest.json').read_text(encoding='utf-8'))
 plans = [(args.backup / 'studio.json', target / 'studio.json')]
-for asset in sorted({item['asset'] for item in config.get('presets', [])}):
+jobs_path = args.backup / 'jobs.json'
+if jobs_path.exists():
+    jobs = json.loads(jobs_path.read_text(encoding='utf-8'))
+    if any(job.get('state') in ('queued', 'sending', 'retrying') for job in jobs):
+        raise SystemExit('Finish or cancel pending transfers and make a fresh backup before replacing the filesystem.')
+    if hashlib.sha256(jobs_path.read_bytes()).hexdigest() != manifest.get('jobs.json', {}).get('sha256'):
+        raise SystemExit('Job history checksum mismatch.')
+    plans.append((jobs_path, target / 'jobs.json'))
+for asset in referenced_assets(config):
     if not isinstance(asset, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,32}', asset):
         raise SystemExit('Invalid asset ID in backup.')
     source = args.backup / (asset + '.bin')

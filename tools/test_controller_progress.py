@@ -10,6 +10,7 @@ import requests
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--controller', default=os.environ.get('CHROMA_CONTROLLER', 'http://chroma.local'))
 parser.add_argument('--serial', required=True)
+parser.add_argument('--job-id', help='Observe an already queued job instead of resending')
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
 base = args.controller.rstrip('/') + '/api/v1'
@@ -22,14 +23,18 @@ def state():
 
 
 before = state()
-assert not any(job['state'] in ('queued', 'sending') for job in before['jobs']), 'Transfer already running'
+assert args.job_id or not any(job['state'] in ('queued', 'sending', 'retrying') for job in before['jobs']), 'Transfer already running'
 assert 'lcd_progress_updates' in before['controller'], 'Progress firmware is not installed'
 device = next(item for item in before['devices'] if item['serial'] == args.serial)
 preset = device.get('last_preset')
 assert preset and any(item['id'] == preset for item in before['presets']), 'No saved current screen to resend'
-response = requests.post(base + '/jobs', json={'serial': args.serial, 'preset': preset}, timeout=10)
-response.raise_for_status()
-job_id = response.json()['id']
+if args.job_id:
+    assert any(job['id'] == args.job_id and job['serial'] == args.serial for job in before['jobs']), 'Job does not belong to selected display'
+    job_id = args.job_id
+else:
+    response = requests.post(base + '/jobs', json={'serial': args.serial, 'preset': preset}, timeout=10)
+    response.raise_for_status()
+    job_id = response.json()['id']
 samples = []
 progress_values = set()
 deadline = time.monotonic() + 330
@@ -51,7 +56,7 @@ try:
             if changed != last:
                 print(json.dumps(sample), flush=True)
                 last = changed
-            if job['state'] not in ('queued', 'sending'):
+            if job['state'] not in ('queued', 'sending', 'retrying'):
                 assert job['state'] == 'completed', job
                 assert job['progress'] == 100, job
                 assert len(progress_values) >= 2, 'LCD did not show changing progress during the transfer'

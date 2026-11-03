@@ -40,6 +40,7 @@ to observe completion. Transfers execute sequentially in the radio's main loop.
 | GET | `/displays`, `/presets`, `/jobs` | Individual collections |
 | POST | `/displays` | Save `serial`, `name`, `id`, `palette`, `channel`, `network`, `wake_channel` |
 | POST | `/displays/activate` | Pair: `{"serial":"JM00000000B"}` |
+| POST | `/displays/inspect` | Read-only query: `{"serial":"YOUR_SERIAL","query":"panel"}` |
 | POST | `/displays/delete` | Remove registry entry: `serial` |
 | POST | `/assets` | Multipart `data` file named `<unique-id>.bin` |
 | GET | `/assets/<id>` | Download a saved display command |
@@ -50,16 +51,23 @@ to observe completion. Transfers execute sequentially in the radio's main loop.
 | GET | `/export` | Export registry/editor metadata; excludes image binary assets |
 
 `tools/studio.py` provides `state`, `displays`, `presets`, `jobs`, `send`, `cancel`,
-and `activate` commands. For example:
+`activate`, and `inspect` commands. For example:
 
 ```powershell
 .\.venv\Scripts\python.exe tools/studio.py presets
 .\.venv\Scripts\python.exe tools/studio.py send JM00000000B <preset-id> --wait
+.\.venv\Scripts\python.exe tools/studio.py inspect JM00000000B panel --wait
 .\.venv\Scripts\python.exe tools/backup_studio.py
 ```
 
 Limits: 12 displays, 20 saved screens, eight pending actions/transfers, and 12
-recent jobs. Job history is session-only; screens and registry persist in SPIFFS.
+recent jobs. Recent jobs, screens, registry, and automations persist in SPIFFS. See [Studio 0.3 features](features.md) for recovery, schedules, layouts, and live data.
+
+Read-only inspection queries support `identity`, `panel`, `firmware`, and
+`updates`. They use the normal radio queue and return a job ID; the completed
+job includes `query` and raw colon-separated hexadecimal `reply`. These commands
+do not change tag settings or refresh its image. A transport acknowledgement is
+not proof that an image was physically displayed.
 Progress reports protocol bytes remaining; completed means the controller received
 the display acknowledgement. Battery percentage and continuous display online
 status are not measured by this implementation. The existing radio protocol is

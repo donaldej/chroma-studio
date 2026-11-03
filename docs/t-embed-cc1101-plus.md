@@ -94,6 +94,7 @@ image assets. See the README for staging a backup during a frontend update.
 The tested board's CC1101 reports version `0x14` and passes the GDO2 check.
 Physical black/yellow full-frame transfers have been acknowledged with the
 browser online, no controller restart, and changing LCD progress through 100%.
-The firmware uses about 130 KB static RAM and 1.19 MB application flash.
+The firmware uses about 145 KB static RAM and 1.37 MB application flash, including
+the embedded React interface.
 Private device-specific manifests/backups are kept locally under ignored
 `artifacts/` and `backups/`; a fresh clone does not include them.

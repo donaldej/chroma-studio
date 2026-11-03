@@ -11,6 +11,7 @@
 #include "web.h"
 #include "network_setup.h"
 #include "studio.h"
+#include "firmware_update.h"
 #include "utils.h"
 #include "mode_sync.h"
 #include "mode_full_sync.h"
@@ -105,6 +106,12 @@ void setup()
 void loop()
 {
 #ifdef CHROMA_T_EMBED_CC1101
+  // A data transfer blocks OTA admission. Keep updater mutex/timeout work out
+  // of the FIFO refill path, just like the existing Studio and LCD polling.
+  if (currentMode != &modeTrans) {
+    poll_firmware_update();
+    if (studio_firmware_busy()) { studio_discard_radio_edges(); delay(2); return; }
+  }
   poll_network();
 #endif
 #ifdef CHROMA_T_EMBED_CC1101

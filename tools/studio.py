@@ -18,11 +18,16 @@ cancel = commands.add_parser('cancel')
 cancel.add_argument('job')
 activate = commands.add_parser('activate')
 activate.add_argument('serial')
+inspect = commands.add_parser('inspect', help='Read tag identity, panel, firmware, or update count')
+inspect.add_argument('serial')
+inspect.add_argument('query', choices=('identity', 'panel', 'firmware', 'updates'))
+inspect.add_argument('--wait', action='store_true')
 args = parser.parse_args()
 paths = {'state': '/state', 'displays': '/displays', 'presets': '/presets', 'jobs': '/jobs',
-         'send': '/jobs', 'cancel': '/jobs/cancel', 'activate': '/displays/activate'}
+         'send': '/jobs', 'cancel': '/jobs/cancel', 'activate': '/displays/activate', 'inspect': '/displays/inspect'}
 body = {'send': lambda: {'serial': args.serial, 'preset': args.preset},
-        'cancel': lambda: {'id': args.job}, 'activate': lambda: {'serial': args.serial}}
+        'cancel': lambda: {'id': args.job}, 'activate': lambda: {'serial': args.serial},
+        'inspect': lambda: {'serial': args.serial, 'query': args.query}}
 response = requests.request('POST' if args.command in body else 'GET',
                             args.controller.rstrip('/') + '/api/v1' + paths[args.command],
                             json=body[args.command]() if args.command in body else None, timeout=12)
@@ -30,7 +35,7 @@ result = response.json()
 print(json.dumps(result, indent=2))
 if not response.ok:
     raise SystemExit(1)
-if args.command == 'send' and args.wait:
+if args.command in ('send', 'inspect') and args.wait:
     deadline = time.monotonic() + 330
     previous = None
     while time.monotonic() < deadline:
@@ -51,5 +56,7 @@ if args.command == 'send' and args.wait:
             print(f"{job['state']}: {job['progress']}%" + (f" - {job['error']}" if job['error'] else ''), flush=True)
             previous = progress
         if job['state'] in ('completed', 'failed', 'cancelled'):
+            if args.command == 'inspect':
+                print(json.dumps(job, indent=2), flush=True)
             raise SystemExit(0 if job['state'] == 'completed' else 1)
     raise SystemExit('Timed out waiting for the controller; check Activity.')

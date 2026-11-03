@@ -1,4 +1,5 @@
 #ifdef CHROMA_T_EMBED_CC1101
+#include "firmware_update.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
@@ -192,6 +193,7 @@ void register_network_routes(AsyncWebServer &server) {
     request->send_P(200, "text/html", setup_page);
   });
   server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (studio_firmware_busy()) { request->send(409,"application/json","{\"error\":\"Firmware update in progress\"}"); return; }
     if (pending_credentials && request->hasParam("ssid", true) && request->hasParam("password", true) &&
         enqueue_credentials(request->getParam("ssid", true)->value(), request->getParam("password", true)->value())) {
       request->send(202, "application/json", "{\"event\":\"wifi.accepted\"}");

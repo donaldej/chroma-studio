@@ -1,21 +1,27 @@
 {
   "name": "chroma-studio",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "private": true,
+  "overrides": { "uuid": "11.1.1" },
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && node scripts/build.mjs",
     "dev": "node scripts/dev.mjs",
-    "test": "node --test tests/packet.test.mjs"
+    "test": "node --test tests/packet.test.mjs tests/features.test.mjs tests/preparation.test.mjs"
   },
   "dependencies": {
+    "@noble/hashes": "1.8.0",
+    "mqtt": "5.10.4",
+    "qrcode-generator": "1.4.4",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "aedes": "0.51.3",
     "esbuild": "0.28.2",
+    "jsqr": "1.4.0",
     "playwright": "1.56.1",
     "typescript": "^5.9.0"
   }

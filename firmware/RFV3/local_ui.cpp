@@ -30,14 +30,16 @@ public:
 };
 MenuLCD lcd;
 StudioMenu menu;
-enum Page { HOME, DEVICES, SCREENS, CONFIRM, ACTIVITY, NETWORK, POWER, POWER_CONFIRM, RESULT };
+enum Page { HOME, DEVICES, SCREENS, CONFIRM, ACTIVITY, NETWORK, POWER, POWER_CONFIRM, PLAYLISTS, TRANSFER_RESULT, RESULT };
 Page page = HOME;
 int selection = 0, device_index = 0, preset_index = 0;
 bool dirty = true;
 bool redraw_enabled = true;
 bool transfer_screen = false;
 bool panel_sleeping = false, backlight_requested = true, encoder_requested = true;
-bool screen_off = false, wake_release = false;
+bool screen_off = false, wake_release = false, manual_screen_off = false, transfer_result = false;
+uint32_t last_input = 0;
+void backlight(bool on) { ledcWrite(7, on ? constrain(menu.brightness, 10, 255) : 0); }
 enum PowerAction { NONE, SHUTDOWN, REBOOT, SCREEN_OFF };
 PowerAction power_action = NONE, pending_power = NONE;
 char transfer_id[17] = {};
@@ -70,7 +72,8 @@ void back() {
   else navigate(HOME);
 }
 int item_count() {
-  if (page == HOME) return 5;
+  if (page == HOME) return 6;
+  if (page == PLAYLISTS) return menu.playlist_count;
   if (page == POWER) return 3;
   if (page == DEVICES) return menu.device_count;
   if (page == SCREENS) return menu.preset_count;
@@ -78,9 +81,15 @@ int item_count() {
 }
 void select() {
   if (page == HOME) {
-    const Page pages[] = {DEVICES, SCREENS, ACTIVITY, NETWORK, POWER};
+    const Page pages[] = {DEVICES, SCREENS, PLAYLISTS, ACTIVITY, NETWORK, POWER};
     navigate(pages[selection]);
-  } else if (page == POWER) {
+  } else if (page == PLAYLISTS && menu.playlist_count) {
+    String error;
+    if (!studio_playlist_toggle(menu.playlist_ids[selection], error)) {
+      strlcpy(notice, error.c_str(), sizeof(notice)); navigate(RESULT);
+    } else dirty = true;
+  } else if (page == TRANSFER_RESULT) navigate(ACTIVITY);
+  else if (page == POWER) {
     power_action = selection == 0 ? SHUTDOWN : selection == 1 ? REBOOT : SCREEN_OFF;
     if (power_action == SCREEN_OFF) pending_power = SCREEN_OFF;
     else navigate(POWER_CONFIRM);
@@ -136,12 +145,23 @@ void draw() {
   lcd.drawFastHLine(12, 30, 296, card);
   lcd.setTextColor(text, background);
   if (page == HOME) {
-    const char *items[] = {"Displays", "Saved screens", "Activity", "Connection", "Power"};
+    const char *items[] = {"Displays", "Saved screens", "Playlists", "Activity", "Connection", "Power"};
     for (int row = 0; row < 3; ++row) {
       int index = max(0, selection - 2) + row;
-      if (index < 5) line(items[index], 39 + row * 32, selection == index,
+      if (index < 6) line(items[index], 39 + row * 32, selection == index,
         index == 0 ? String(menu.device_count) : index == 1 ? String(menu.preset_count) : "");
     }
+  } else if (page == PLAYLISTS) {
+    if (!menu.playlist_count) { lcd.drawString("No playlists yet", 14, 55, 2); lcd.drawString("Create one in the web app", 14, 87, 2); }
+    for (int row = 0; row < 3; ++row) {
+      int index = max(0, selection - 2) + row;
+      if (index < menu.playlist_count) line(menu.playlists[index], 39 + row * 32, index == selection, menu.playlist_enabled[index] ? "ON" : "OFF");
+    }
+  } else if (page == TRANSFER_RESULT) {
+    bool done = strcmp(menu.job_state, "completed") == 0;
+    lcd.drawString(done ? "Transfer acknowledged" : "Transfer needs attention", 14, 43, 2);
+    lcd.setTextColor(muted, background); lcd.drawString(shorten(menu.job, 285), 14, 75, 2);
+    lcd.drawString(done ? "Check screen to confirm" : shorten(menu.error, 285), 14, 107, 2);
   } else if (page == DEVICES || page == SCREENS) {
     int count = item_count();
     if (!count) {
@@ -197,6 +217,11 @@ bool local_ui_prepare_transfer(const char *id, const char *title) {
   strlcpy(menu.job_state, "queued", sizeof(menu.job_state));
   menu.progress = 0;
   page = ACTIVITY;
+  transfer_result = false;
+  if (panel_sleeping && !manual_screen_off) {
+    lcd.sleep(false); delay(120); panel_sleeping = false; screen_off = false;
+    backlight(backlight_requested);
+  }
   if (!panel_sleeping && redraw_enabled) draw();
   detachInterrupt(4); detachInterrupt(5);
   portENTER_CRITICAL(&encoder_mux);
@@ -212,7 +237,7 @@ uint32_t local_ui_progress_updates() { return progress_updates; }
 
 void local_ui_finish_transfer(const char *id) {
   if (strcmp(transfer_id, id) != 0) return;
-  transfer_screen = false; transfer_id[0] = 0; dirty = true;
+  transfer_screen = false; transfer_id[0] = 0; dirty = true; transfer_result = true; last_input = millis();
   if (encoder_requested && !studio_radio_service()) {
     last_encoder = (digitalRead(4) << 1) | digitalRead(5);
     attachInterrupt(4, encoder_interrupt, CHANGE);
@@ -223,7 +248,7 @@ void local_ui_finish_transfer(const char *id) {
 void local_ui_diagnostics(bool backlight, bool encoder, bool redraw) {
   if (studio_radio_service()) return;
   backlight_requested = backlight; encoder_requested = encoder;
-  digitalWrite(21, backlight && !panel_sleeping ? HIGH : LOW);
+  ledcWrite(7, backlight && !panel_sleeping ? constrain(menu.brightness, 10, 255) : 0);
   detachInterrupt(4); detachInterrupt(5);
   if (encoder && !transfer_screen) { attachInterrupt(4, encoder_interrupt, CHANGE); attachInterrupt(5, encoder_interrupt, CHANGE); }
   redraw_enabled = redraw;
@@ -239,8 +264,8 @@ void init_local_ui() {
   attachInterrupt(digitalPinToInterrupt(4), encoder_interrupt, CHANGE);
   attachInterrupt(digitalPinToInterrupt(5), encoder_interrupt, CHANGE);
   lcd.init(); lcd.setRotation(3); lcd.setTextWrap(false);
-  pinMode(21, OUTPUT); digitalWrite(21, HIGH);
-  studio_menu(menu);
+  pinMode(21, OUTPUT); ledcSetup(7, 5000, 8); ledcAttachPin(21, 7);
+  studio_menu(menu); backlight(true); last_input = millis();
   draw();
   Serial.println("Studio LCD ready: 320x170; wheel GPIO4/5, press GPIO0, home GPIO6");
 }
@@ -267,6 +292,15 @@ void poll_local_ui(bool radio_idle) {
   bool home = digitalRead(6) == LOW;
   uint32_t slot_elapsed = millis() - get_last_slot_time();
   bool safe_slot = radio_idle && slot_elapsed > 100 && slot_elapsed < 650;
+  if (steps || down || home) last_input = millis();
+  if (transfer_result && safe_slot) {
+    studio_menu(menu); transfer_result = false;
+    if (strcmp(menu.job_state, "retrying") != 0 && !menu.queued) navigate(TRANSFER_RESULT);
+    else navigate(ACTIVITY);
+  }
+  if (!screen_off && menu.screen_timeout && millis() - last_input > static_cast<uint32_t>(menu.screen_timeout) * 1000 && safe_slot) {
+    backlight(false); lcd.sleep(true); panel_sleeping = true; screen_off = true; manual_screen_off = false; wake_release = false;
+  }
   if (pending_power != NONE && safe_slot) {
     PowerAction action = pending_power;
     pending_power = NONE;
@@ -277,7 +311,7 @@ void poll_local_ui(bool radio_idle) {
     } else if (action == REBOOT) {
       ESP.restart();
     } else {
-      digitalWrite(21, LOW);
+      backlight(false);
       if (!panel_sleeping) lcd.sleep(true);
       panel_sleeping = true;
       if (action == SHUTDOWN) {
@@ -291,7 +325,7 @@ void poll_local_ui(bool radio_idle) {
         esp_sleep_enable_ext0_wakeup(GPIO_NUM_6, 0);
         esp_deep_sleep_start();
       }
-      screen_off = true;
+      screen_off = true; manual_screen_off = true;
       wake_release = true;
     }
   }
@@ -299,8 +333,8 @@ void poll_local_ui(bool radio_idle) {
     // Consume the selecting press and then the wake press, without activating
     // the highlighted menu item. Radio and web jobs continue while dark.
     if (wake_release) { if (!down && !home) wake_release = false; }
-    else if ((down || home) && safe_slot) {
-      screen_off = false; wake_release = true; button_down = false; held = false;
+    else if ((down || home || steps) && safe_slot) {
+      screen_off = false; manual_screen_off = false; wake_release = true; button_down = false; held = false;
       if (home) navigate(HOME);
     }
     if (screen_off) return;
@@ -311,7 +345,7 @@ void poll_local_ui(bool radio_idle) {
     lcd.sleep(false);
     delay(120);
     panel_sleeping = false;
-    digitalWrite(21, backlight_requested ? HIGH : LOW);
+    backlight(backlight_requested);
     last_encoder = (digitalRead(4) << 1) | digitalRead(5);
     quarter_steps = 0;
     if (encoder_requested) { attachInterrupt(4, encoder_interrupt, CHANGE); attachInterrupt(5, encoder_interrupt, CHANGE); }
@@ -332,12 +366,15 @@ void poll_local_ui(bool radio_idle) {
   if (!down && button_down && !held && millis() - pressed_at > 35) select();
   button_down = down;
   static bool home_down = false;
-  if (home && !home_down) navigate(HOME);
+  static uint32_t home_pressed = 0; static bool home_held = false;
+  if (home && !home_down) { home_pressed = millis(); home_held = false; }
+  if (home && !home_held && millis() - home_pressed > 700) { navigate(DEVICES); home_held = true; }
+  if (!home && home_down && !home_held) navigate(HOME);
   home_down = home;
   if (millis() - last_snapshot > 500) {
     StudioMenu next;
     studio_menu(next);
-    if (memcmp(&next, &menu, sizeof(menu)) != 0) { menu = next; dirty = true; }
+    if (memcmp(&next, &menu, sizeof(menu)) != 0) { menu = next; backlight(backlight_requested && !panel_sleeping); dirty = true; }
     device_index = min(device_index, max(0, menu.device_count - 1));
     preset_index = min(preset_index, max(0, menu.preset_count - 1));
     selection = min(selection, max(0, item_count() - 1));
